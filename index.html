@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VidtoGif — high-quality video to GIF, right in your browser</title>
+    <meta
+      name="description"
+      content="Turn video into a beautiful GIF using gifski, running entirely in your browser. No uploads, no accounts, no limits. Free and open source."
+    />
+    <meta name="theme-color" content="#0e0f14" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎞️</text></svg>" />
+    <script src="./coi-serviceworker.js"></script>
+  </head>
+  <body>
+    <div class="glow" aria-hidden="true"></div>
+
+    <header class="site-head">
+      <div class="wordmark">
+        <span class="logo" aria-hidden="true">◗</span>
+        <span>Vid<em>to</em>Gif</span>
+      </div>
+      <nav>
+        <span class="pill" id="threadPill" title="Multi-threaded encoding requires SharedArrayBuffer">checking…</span>
+        <a class="ghost-link" href="https://github.com/pastaluke/VidtoGif" target="_blank" rel="noopener">
+          Source
+        </a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <h1>Gorgeous GIFs, made <em>on your own machine</em>.</h1>
+        <p>
+          Powered by <a href="https://gif.ski" target="_blank" rel="noopener">gifski</a> compiled to
+          WebAssembly — thousands of colours per frame, cross-frame palettes, real dithering. Your
+          video never leaves this tab.
+        </p>
+        <ul class="badges">
+          <li>No upload</li>
+          <li>No sign-up</li>
+          <li>No watermark</li>
+          <li>No size cap but your RAM</li>
+        </ul>
+      </section>
+
+      <!-- Step 1: pick a file -->
+      <section id="dropzone" class="dropzone" tabindex="0" role="button"
+               aria-label="Choose a video file, or drop one here">
+        <input type="file" id="fileInput" accept="video/*" hidden />
+        <div class="drop-inner">
+          <div class="drop-icon" aria-hidden="true">🎞️</div>
+          <p class="drop-title">Drop a video here</p>
+          <p class="drop-sub">or <span class="link">browse your files</span> — MP4, WebM, MOV, anything your browser plays</p>
+        </div>
+      </section>
+
+      <!-- Step 2: trim + settings -->
+      <section id="editor" class="editor" hidden>
+        <div class="stage">
+          <video id="preview" playsinline muted loop></video>
+          <div class="stage-meta">
+            <span id="fileName">—</span>
+            <button type="button" class="text-btn" id="changeFile">Change video</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="field">
+            <div class="field-head">
+              <label>Trim</label>
+              <output id="trimReadout">0.00s – 0.00s</output>
+            </div>
+            <div class="range-pair" id="trimControl">
+              <input type="range" id="trimStart" min="0" max="100" value="0" step="0.01" aria-label="Trim start" />
+              <input type="range" id="trimEnd" min="0" max="100" value="100" step="0.01" aria-label="Trim end" />
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-head">
+              <label for="fps">Frame rate</label>
+              <output id="fpsReadout">15 fps</output>
+            </div>
+            <input type="range" id="fps" min="5" max="50" value="15" step="1" />
+          </div>
+
+          <div class="field">
+            <div class="field-head">
+              <label for="width">Width</label>
+              <output id="widthReadout">480 px</output>
+            </div>
+            <input type="range" id="width" min="120" max="1280" value="480" step="20" />
+          </div>
+
+          <div class="field">
+            <div class="field-head">
+              <label for="quality">Quality</label>
+              <output id="qualityReadout">80</output>
+            </div>
+            <input type="range" id="quality" min="20" max="100" value="80" step="1" />
+          </div>
+
+          <label class="check">
+            <input type="checkbox" id="loop" checked />
+            <span>Loop forever</span>
+          </label>
+
+          <div class="estimate" id="estimate"></div>
+
+          <button type="button" id="convert" class="primary">Make the GIF</button>
+        </div>
+      </section>
+
+      <!-- Step 3: progress -->
+      <section id="progressCard" class="progress-card" hidden>
+        <div class="progress-head">
+          <span id="progressLabel">Working…</span>
+          <button type="button" class="text-btn" id="cancel">Cancel</button>
+        </div>
+        <div class="bar"><div class="bar-fill" id="barFill"></div></div>
+        <p class="progress-note" id="progressNote"></p>
+      </section>
+
+      <!-- Step 4: result -->
+      <section id="result" class="result" hidden>
+        <img id="resultImg" alt="Your finished GIF" />
+        <div class="result-side">
+          <h2>Done.</h2>
+          <dl class="stats">
+            <div><dt>Size</dt><dd id="statSize">—</dd></div>
+            <div><dt>Dimensions</dt><dd id="statDims">—</dd></div>
+            <div><dt>Frames</dt><dd id="statFrames">—</dd></div>
+            <div><dt>Encoded in</dt><dd id="statTime">—</dd></div>
+          </dl>
+          <a id="download" class="primary" download="vidtogif.gif">Download GIF</a>
+          <button type="button" class="secondary" id="startOver">Start over</button>
+        </div>
+      </section>
+
+      <p id="error" class="error" hidden></p>
+    </main>
+
+    <footer>
+      <p>
+        Everything runs locally in your browser — there is no server to upload to.
+        <a href="https://github.com/pastaluke/VidtoGif" target="_blank" rel="noopener">VidtoGif</a>
+        is free software under the
+        <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">AGPL-3.0</a>,
+        built on <a href="https://github.com/ImageOptim/gifski" target="_blank" rel="noopener">gifski</a>
+        by Kornel Lesiński and
+        <a href="https://github.com/jamsinclair/gifski-wasm" target="_blank" rel="noopener">gifski-wasm</a>.
+      </p>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
