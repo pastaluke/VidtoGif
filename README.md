@@ -83,11 +83,26 @@ root and under `/VidtoGif/`.
 Feature work happens on branches and gets verified in a throwaway environment
 before merging — see the section below for what that looked like in practice.
 
-One gotcha worth knowing if you fork this: the `github-pages` environment only
-accepts deployments from the repository's **default branch**. If `main` isn't
-the default, the `build` job succeeds, then `deploy` fails in about two seconds
-with no steps and no logs — which looks like nothing at all went wrong. Check
-Settings → General → Default branch before debugging the workflow.
+One gotcha worth knowing if you fork this. The `github-pages` environment is
+created the moment you enable Pages, and it pins a **deployment branch
+allowlist** to whatever the default branch was at that instant. Renaming or
+switching the default branch later does *not* update that allowlist, so
+deploying from `main` gets rejected:
+
+```
+Branch "main" is not allowed to deploy to github-pages
+due to environment protection rules.
+```
+
+Fix it at Settings → Environments → `github-pages` → "Deployment branches and
+tags" (add `main`, or remove the restriction) — not at Settings → General →
+Default branch, which looks like the culprit but isn't.
+
+Two things make this hard to diagnose: `build` succeeds and only `deploy` fails,
+in about two seconds with no steps, so it reads as a silent non-failure. And
+because the job never starts it produces no logs — `.../jobs/<id>/logs` returns
+404. The error is in the check run's **annotations**, which is a different API
+surface and the only place it appears.
 
 Any static host works — Netlify, Cloudflare Pages, S3. If yours *can* set
 headers, send COOP/COEP and the service worker becomes unnecessary.
