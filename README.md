@@ -75,10 +75,13 @@ multi-threading works locally without the service worker.
 
 ## Deploy
 
-`.github/workflows/deploy.yml` builds and publishes `dist/` to GitHub Pages on
-every push to `main`. Enable it once under **Settings → Pages → Source → GitHub
-Actions**. The build uses a relative base path, so it works both at a domain
+`main` is the live branch. `.github/workflows/deploy.yml` builds and publishes
+`dist/` to GitHub Pages on every push to it (Pages source is set to **GitHub
+Actions**). The build uses a relative base path, so it works both at a domain
 root and under `/VidtoGif/`.
+
+Feature work happens on branches and gets verified in a throwaway environment
+before merging — see the section below for what that looked like in practice.
 
 Any static host works — Netlify, Cloudflare Pages, S3. If yours *can* set
 headers, send COOP/COEP and the service worker becomes unnecessary.
@@ -94,6 +97,101 @@ headers, send COOP/COEP and the service worker becomes unnecessary.
   correctly timed, just choppier.
 - Only formats your browser can already play are supported (MP4/H.264 and WebM
   everywhere; MOV/HEVC depends on the browser).
+
+## If you're curious: how this got built
+
+The path from empty repo to working site, including the wrong turns. Each step
+is roughly "what I assumed → what measuring it actually showed".
+
+**1. Find a gifski that runs in a browser.**
+`gifski-wasm` on npm wraps upstream gifski. Reading the package before writing
+any code settled three things: `encode()` takes *all* frames as one buffer (so
+memory, not CPU, is the hard limit), there's no progress callback (so the encode
+bar has to be indeterminate), and it ships both a single-threaded and a
+rayon-parallel build with automatic fallback (so multi-threading is a bonus, not
+a requirement).
+
+**2. Capture frames at output size, not source size.**
+300 frames of 1080p RGBA is ~2.5 GB. The same clip at 480px wide is ~155 MB.
+Drawing the video straight to the target dimensions instead of resizing later
+makes the difference between working and killing the tab.
+
+**3. Get a test video.**
+The container's ffmpeg turned out to be stripped down — no `lavfi`, no PNG
+decoder, no `rawvideo`. Rather than fight it, I had Chromium record a canvas
+animation via `MediaRecorder`. The animation is a square moving left to right,
+chosen so a wrong or repeated frame is detectable later by arithmetic, not by
+eye.
+
+**4. First test passed. It shouldn't have.**
+Every panel was on screen from page load, so the test was reading empty
+placeholders and calling it success. Cause: `.editor { display: grid }` outranks
+the browser's built-in `[hidden] { display: none }`, so the `hidden` property
+did nothing. Fixed by restating it in the stylesheet. Lesson applied for the
+rest of the build: assert on *content*, not on whether an element is visible.
+
+**5. It worked, but it was slow.**
+A 6s 720p clip took 32.8s. Timing the phases separately: 25.6s reading frames,
+7.1s in gifski. So decoding was the problem, not the encoder.
+
+**6. Benchmark the alternatives instead of guessing.**
+Four capture strategies, same clip, same machine. The first run hung outright —
+which was itself the finding: `requestVideoFrameCallback` never fires after
+seeking a paused video, so waiting on it blocks forever. With timeouts added:
+
+| strategy | result |
+|---|---|
+| seek + rVFC, 120ms cap | 298ms/frame — rVFC fired **0** times, so the cap was paid in full every frame |
+| seek + `seeked` event only | 178ms/frame |
+| play at 1x, catch frames | real time |
+| play at 4x, catch frames | **8x faster** than seeking |
+
+Seeking costs ~180ms each because it's a fresh decode every time. Playing once
+decodes linearly. Switched the primary path to playback capture and deleted the
+dead rVFC wait from the seek path, which stayed on as a fallback.
+
+Result: 32.8s → 6.4s.
+
+**7. Check the frames are right, not just that a GIF appeared.**
+A valid GIF header proves nothing about content. A harness calling the decoder
+directly checked three things: every frame hashes differently, the moving
+square's horizontal position increases monotonically, and the frame durations
+sum to the clip length. It caught a real shortfall — 60 frames captured where 89
+were asked for.
+
+**8. Stop assuming 60Hz.**
+The browser presents at most one frame per display refresh, so playing at 3x on
+a 60Hz display yields ~20fps of media. This container presents at 30Hz, so 3x
+yielded 10fps. Rather than hardcode a different number, the capture now measures
+the rate it's actually achieving and slows down when it falls behind.
+
+**9. A 25fps request took 30 seconds. Reproducibly.**
+Two bugs compounding. First, sampling used a minimum gap between frames, which
+rejects any frame arriving slightly early — a 30fps source sampled at 25fps
+degrades to 15fps. Second, that shortfall tripped the "playback failed" check,
+triggering a *full* seek-based re-decode on top of the playback pass. Both
+strategies, paid in full.
+
+Fixed by resampling against a moving target timestamp instead of a gap, and by
+judging the result against what the source can actually supply rather than what
+was requested. Asking 50fps of a 30fps clip is not a failure, and re-running the
+slow path would only produce duplicates.
+
+**10. The same request gave different answers on different runs.**
+Source frame rate was being estimated from the *smallest* gap between frames,
+which one anomalously short gap ruins. One 50fps run gave 175 frames in 6s; the
+next gave 298 frames in 53s, 112 of them duplicates. Switched to the median gap.
+Stable across repeated runs.
+
+**11. Verify the deployment story, not just the app.**
+Multi-threading needs headers GitHub Pages can't send. Tested the service worker
+against a plain static server with no headers at all: it registered, reloaded
+once, and the page came back cross-origin isolated on 4 threads. Then tested
+with service workers blocked entirely — single-threaded output was byte-identical,
+just slower. Both paths are real, so neither is a guess.
+
+**12. Final pass.** Frame rates 10–50fps, both threading modes, trim, cancel,
+and the memory guard at its warn and hard-block thresholds.
 
 ## Licence
 
