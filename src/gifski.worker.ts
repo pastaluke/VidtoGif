@@ -35,7 +35,9 @@ self.addEventListener('message', async (event: MessageEvent<EncodeRequest>) => {
     post({
       type: 'error',
       id,
+      name: error instanceof Error ? error.name : typeof error,
       message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
     });
   }
 });

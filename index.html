@@ -138,7 +138,20 @@
         </div>
       </section>
 
-      <p id="error" class="error" hidden></p>
+      <div id="error" class="error" hidden>
+        <p class="error-headline" id="errorHeadline"></p>
+        <p class="error-advice" id="errorAdvice" hidden></p>
+        <details class="error-details" id="errorDetails" hidden>
+          <summary>Technical details</summary>
+          <p class="error-note">
+            Nothing is sent anywhere — this page has no server. Copy this into a
+            <a href="https://github.com/pastaluke/VidtoGif/issues/new" target="_blank" rel="noopener">bug report</a>
+            so the failure can actually be fixed.
+          </p>
+          <pre id="errorReport"></pre>
+          <button type="button" class="secondary" id="copyReport">Copy report</button>
+        </details>
+      </div>
     </main>
 
     <footer>

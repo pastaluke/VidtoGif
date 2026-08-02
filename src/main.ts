@@ -8,6 +8,13 @@ import {
   type VideoInfo,
 } from './decode';
 import type { EncodeRequest, WorkerResponse } from './types';
+import {
+  buildReport,
+  estimatePeakBytes,
+  formatBytes,
+  memoryBudget,
+  type JobContext,
+} from './diagnostics';
 
 /* ------------------------------------------------------------------ *
  * Element lookup
@@ -57,7 +64,12 @@ const statDims = $<HTMLElement>('statDims');
 const statFrames = $<HTMLElement>('statFrames');
 const statTime = $<HTMLElement>('statTime');
 
-const errorBox = $<HTMLParagraphElement>('error');
+const errorBox = $<HTMLDivElement>('error');
+const errorHeadline = $<HTMLParagraphElement>('errorHeadline');
+const errorAdvice = $<HTMLParagraphElement>('errorAdvice');
+const errorDetails = $<HTMLDetailsElement>('errorDetails');
+const errorReport = $<HTMLPreElement>('errorReport');
+const copyReport = $<HTMLButtonElement>('copyReport');
 const threadPill = $<HTMLSpanElement>('threadPill');
 
 /* ------------------------------------------------------------------ *
@@ -71,20 +83,12 @@ let gifUrl: string | null = null;
 let abortController: AbortController | null = null;
 let requestId = 0;
 
-/** Above this much peak RAM, converting is likely to kill the tab. */
-const HARD_LIMIT_BYTES = 2_000_000_000;
-const WARN_LIMIT_BYTES = 900_000_000;
+/** Scaled to the device — a phone dies far below a desktop's ceiling. */
+const BUDGET = memoryBudget();
 
 /* ------------------------------------------------------------------ *
  * Formatting helpers
  * ------------------------------------------------------------------ */
-
-const formatBytes = (bytes: number): string => {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
-};
 
 const formatTime = (seconds: number): string => {
   const m = Math.floor(seconds / 60);
@@ -118,15 +122,52 @@ function showView(view: View) {
   result.hidden = view !== 'done';
 }
 
+/** Simple message with no diagnostic payload (bad file picked, empty trim, ...). */
 function showError(message: string) {
-  errorBox.textContent = message;
+  errorHeadline.textContent = message;
+  errorAdvice.hidden = true;
+  errorDetails.hidden = true;
   errorBox.hidden = false;
+}
+
+/**
+ * Report a failure with everything needed to reproduce it. There is no server
+ * collecting these, so the copyable block is the only path from "it broke" to
+ * "it got fixed".
+ */
+function showFailure(error: unknown, phase: string, job?: JobContext) {
+  const report = buildReport(error, phase, job);
+
+  errorHeadline.textContent = report.headline;
+
+  errorAdvice.textContent = report.advice ?? '';
+  errorAdvice.hidden = !report.advice;
+
+  errorReport.textContent = report.details;
+  errorDetails.hidden = false;
+  errorDetails.open = false;
+
+  errorBox.hidden = false;
+  console.error('[VidtoGif] %s\n%s', report.headline, report.details);
 }
 
 function clearError() {
   errorBox.hidden = true;
-  errorBox.textContent = '';
+  errorHeadline.textContent = '';
+  errorAdvice.textContent = '';
+  errorReport.textContent = '';
 }
+
+copyReport.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(errorReport.textContent ?? '');
+    copyReport.textContent = 'Copied';
+  } catch {
+    // Clipboard access can be denied; selecting the text still works.
+    copyReport.textContent = 'Press and hold the text to copy';
+  }
+  window.setTimeout(() => (copyReport.textContent = 'Copy report'), 2500);
+});
 
 /* ------------------------------------------------------------------ *
  * File intake
@@ -257,24 +298,49 @@ function syncReadouts() {
   updateEstimate();
 }
 
-function updateEstimate() {
-  if (!videoInfo) return;
+/** Everything about the pending job, for the estimate and for failure reports. */
+function currentJob(): JobContext | undefined {
+  if (!videoInfo || !currentFile) return undefined;
 
   const { start, end } = trimSeconds();
   const fps = Number(fpsInput.value);
   const { width, height } = outputSize(videoInfo, Number(widthInput.value));
-  const frames = frameCountFor(start, end, fps);
-  const raw = frames * width * height * 4;
-  const peak = raw * 2; // gifski concatenates every frame into one buffer
+  const frameCount = frameCountFor(start, end, fps);
 
-  const tooBig = peak > HARD_LIMIT_BYTES;
-  estimate.classList.toggle('warn', peak > WARN_LIMIT_BYTES);
+  return {
+    fileName: currentFile.name,
+    fileSize: currentFile.size,
+    fileType: currentFile.type,
+    sourceWidth: videoInfo.width,
+    sourceHeight: videoInfo.height,
+    duration: videoInfo.duration,
+    trimStart: start,
+    trimEnd: end,
+    fps,
+    outputWidth: width,
+    outputHeight: height,
+    frameCount,
+    quality: Number(qualityInput.value),
+    estimatedPeakBytes: estimatePeakBytes(frameCount, width, height),
+  };
+}
+
+function updateEstimate() {
+  const job = currentJob();
+  if (!job) return;
+
+  const { frameCount, outputWidth, outputHeight, estimatedPeakBytes: peak } = job;
+
+  const tooBig = peak > BUDGET.hard;
+  estimate.classList.toggle('warn', peak > BUDGET.warn);
   convertBtn.disabled = tooBig;
 
   estimate.innerHTML = tooBig
-    ? `<strong>Too much for one pass.</strong> ${frames} frames at ${width}×${height} needs roughly
-       ${formatBytes(peak)} of memory. Trim the clip, drop the frame rate, or reduce the width.`
-    : `<strong>${frames}</strong> frames · <strong>${width}×${height}</strong> ·
+    ? `<strong>Too big for this device.</strong> ${frameCount} frames at ${outputWidth}×${outputHeight}
+       needs about ${formatBytes(peak)}, and ${BUDGET.basis} gives us roughly
+       ${formatBytes(BUDGET.hard)} to work with. Reduce the width first — memory scales with
+       width × height — then the frame rate or the trim.`
+    : `<strong>${frameCount}</strong> frames · <strong>${outputWidth}×${outputHeight}</strong> ·
        about <strong>${formatBytes(peak)}</strong> of memory while encoding.`;
 }
 
@@ -305,8 +371,17 @@ function encodeInWorker(request: EncodeRequest, signal: AbortSignal): Promise<Ui
     const onMessage = (event: MessageEvent<WorkerResponse>) => {
       if (event.data.id !== request.id) return;
       cleanup();
-      if (event.data.type === 'done') resolve(event.data.gif);
-      else reject(new Error(event.data.message));
+
+      if (event.data.type === 'done') {
+        resolve(event.data.gif);
+        return;
+      }
+
+      // Rebuild the error so the report shows where it really came from.
+      const error = new Error(event.data.message);
+      error.name = event.data.name;
+      if (event.data.stack) error.stack = event.data.stack;
+      reject(error);
     };
 
     const onWorkerError = (event: ErrorEvent) => {
@@ -348,6 +423,11 @@ async function convert() {
   const { signal } = abortController;
   const startedAt = performance.now();
 
+  // Snapshot the job now: on failure the sliders may have moved, and the report
+  // has to describe the run that actually broke.
+  const job = currentJob();
+  let phase = 'decoding frames';
+
   showView('busy');
   setProgress(0, 'Reading frames…', '');
 
@@ -366,6 +446,7 @@ async function convert() {
       },
     });
 
+    phase = 'encoding with gifski';
     setProgress(null, 'Encoding with gifski…', `${decoded.frames.length} frames · this is the slow part`);
 
     const frameCount = decoded.frames.length;
@@ -397,12 +478,8 @@ async function convert() {
 
     showView('done');
   } catch (error) {
-    if (error instanceof AbortedError) {
-      showView('edit');
-    } else {
-      showView('edit');
-      showError(error instanceof Error ? error.message : String(error));
-    }
+    showView('edit');
+    if (!(error instanceof AbortedError)) showFailure(error, phase, job);
   } finally {
     abortController = null;
   }

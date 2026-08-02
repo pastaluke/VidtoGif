@@ -107,12 +107,29 @@ surface and the only place it appears.
 Any static host works — Netlify, Cloudflare Pages, S3. If yours *can* set
 headers, send COOP/COEP and the service worker becomes unnecessary.
 
+## When it fails
+
+There is no server, so there is no error reporting either — nobody sees a crash
+unless the page shows it. A failed conversion therefore renders a plain-language
+cause, and a copyable report carrying the device, the job settings and the raw
+error, ready to paste into an issue.
+
+This matters because the failure that actually shipped was a wasm panic, which
+reaches JavaScript as the single word `unreachable`. On its own it says nothing;
+in practice it always means gifski exhausted its memory.
+
 ## Limits
 
-- The whole clip is held in memory as RGBA, and gifski concatenates every frame
-  into a single buffer, so peak usage is about `frames × width × height × 8`
-  bytes. The estimate under the settings shows this; past ~2 GB the convert
-  button is disabled rather than letting the tab die.
+- The whole clip is held in memory as RGBA. Peak usage is about
+  `frames × width × height × 4 × 3.2` — three copies exist at once (the decoded
+  frames in JS, the single buffer `gifski-wasm` concatenates them into, and that
+  buffer copied into wasm linear memory) plus gifski's own working set.
+- The budget scales to the device rather than assuming a desktop: wasm32 is
+  capped at 4 GB by specification and browsers fall over well before that,
+  phones dramatically so. `navigator.deviceMemory` narrows it further where the
+  browser reports it. Past that budget the convert button is disabled, with the
+  numbers shown, instead of letting the tab die mid-encode.
+- Width is the most effective dial, since memory scales with width × height.
 - Frame capture is bounded by what your machine can present and read back. On a
   slow machine a high frame-rate request produces fewer frames than asked for —
   correctly timed, just choppier.

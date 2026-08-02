@@ -13,4 +13,7 @@ export interface EncodeRequest {
 
 export type WorkerResponse =
   | { type: 'done'; id: number; gif: Uint8Array }
-  | { type: 'error'; id: number; message: string };
+  // Errors cross the worker boundary as plain data, so carry the parts that
+  // matter for diagnosis. A wasm panic arrives as RuntimeError("unreachable"),
+  // and losing the name would hide that it came from inside gifski.
+  | { type: 'error'; id: number; name: string; message: string; stack?: string };
