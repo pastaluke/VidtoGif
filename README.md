@@ -83,6 +83,12 @@ root and under `/VidtoGif/`.
 Feature work happens on branches and gets verified in a throwaway environment
 before merging — see the section below for what that looked like in practice.
 
+One gotcha worth knowing if you fork this: the `github-pages` environment only
+accepts deployments from the repository's **default branch**. If `main` isn't
+the default, the `build` job succeeds, then `deploy` fails in about two seconds
+with no steps and no logs — which looks like nothing at all went wrong. Check
+Settings → General → Default branch before debugging the workflow.
+
 Any static host works — Netlify, Cloudflare Pages, S3. If yours *can* set
 headers, send COOP/COEP and the service worker becomes unnecessary.
 
