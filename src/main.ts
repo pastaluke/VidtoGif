@@ -15,6 +15,15 @@ import {
   memoryBudget,
   type JobContext,
 } from './diagnostics';
+import {
+  expectedSeconds,
+  formatClock,
+  formatDuration,
+  hasCalibration,
+  megapixels,
+  recordEncode,
+  watchdogSeconds,
+} from './estimate';
 
 /* ------------------------------------------------------------------ *
  * Element lookup
@@ -82,6 +91,7 @@ let previewUrl: string | null = null;
 let gifUrl: string | null = null;
 let abortController: AbortController | null = null;
 let requestId = 0;
+let encodeTimer: number | null = null;
 
 /** Scaled to the device — a phone dies far below a desktop's ceiling. */
 const BUDGET = memoryBudget();
@@ -335,13 +345,22 @@ function updateEstimate() {
   estimate.classList.toggle('warn', peak > BUDGET.warn);
   convertBtn.disabled = tooBig;
 
+  // Encoding cost climbs steeply at the very top of the quality range: measured
+  // here, 100 takes about 4x as long as 80 and produces a far bigger file for a
+  // small visual gain. Worth saying at the point the choice is made.
+  const qualityNote =
+    job.quality >= 100
+      ? `<br /><span class="hint">Quality 100 encodes roughly <strong>4× slower</strong> than 90
+         and makes a much larger GIF. 90 is usually indistinguishable.</span>`
+      : '';
+
   estimate.innerHTML = tooBig
     ? `<strong>Too big for this device.</strong> ${frameCount} frames at ${outputWidth}×${outputHeight}
        needs about ${formatBytes(peak)}, and ${BUDGET.basis} gives us roughly
        ${formatBytes(BUDGET.hard)} to work with. Reduce the width first — memory scales with
        width × height — then the frame rate or the trim.`
     : `<strong>${frameCount}</strong> frames · <strong>${outputWidth}×${outputHeight}</strong> ·
-       about <strong>${formatBytes(peak)}</strong> of memory while encoding.`;
+       about <strong>${formatBytes(peak)}</strong> of memory while encoding.${qualityNote}`;
 }
 
 for (const input of [trimStart, trimEnd]) {
@@ -362,12 +381,19 @@ for (const input of [fpsInput, widthInput, qualityInput]) {
  * Encoding
  * ------------------------------------------------------------------ */
 
-const worker = new Worker(new URL('./gifski.worker.ts', import.meta.url), {
-  type: 'module',
-});
+const createWorker = () =>
+  new Worker(new URL('./gifski.worker.ts', import.meta.url), { type: 'module' });
+
+// Recreated after a cancel: gifski's wasm call is synchronous and has no
+// cancellation hook, so the only way to actually stop it is to kill the worker.
+let worker = createWorker();
 
 function encodeInWorker(request: EncodeRequest, signal: AbortSignal): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
+    // Capture the instance up front so cleanup detaches from the same worker
+    // even if a cancel swaps in a replacement.
+    const active = worker;
+
     const onMessage = (event: MessageEvent<WorkerResponse>) => {
       if (event.data.id !== request.id) return;
       cleanup();
@@ -391,22 +417,29 @@ function encodeInWorker(request: EncodeRequest, signal: AbortSignal): Promise<Ui
 
     const onAbort = () => {
       cleanup();
+      // Terminating is the only real cancellation available. Rejecting the
+      // promise alone would leave the worker burning CPU inside wasm to produce
+      // a GIF nobody is waiting for — noticeable heat and battery on a phone.
+      // Killing a dedicated worker also tears down the workers it spawned, so
+      // the rayon thread pool goes with it.
+      worker.terminate();
+      worker = createWorker();
       reject(new AbortedError());
     };
 
     const cleanup = () => {
-      worker.removeEventListener('message', onMessage);
-      worker.removeEventListener('error', onWorkerError);
+      active.removeEventListener('message', onMessage);
+      active.removeEventListener('error', onWorkerError);
       signal.removeEventListener('abort', onAbort);
     };
 
-    worker.addEventListener('message', onMessage);
-    worker.addEventListener('error', onWorkerError);
+    active.addEventListener('message', onMessage);
+    active.addEventListener('error', onWorkerError);
     signal.addEventListener('abort', onAbort, { once: true });
 
     // Transfer the frame buffers so we don't briefly hold two copies of a
     // multi-hundred-megabyte payload.
-    worker.postMessage(
+    active.postMessage(
       request,
       request.frames.map((frame) => frame.buffer as ArrayBuffer),
     );
@@ -447,9 +480,14 @@ async function convert() {
     });
 
     phase = 'encoding with gifski';
-    setProgress(null, 'Encoding with gifski…', `${decoded.frames.length} frames · this is the slow part`);
 
     const frameCount = decoded.frames.length;
+    const quality = Number(qualityInput.value);
+    const mp = megapixels(frameCount, decoded.width, decoded.height);
+    const expected = expectedSeconds(mp, quality);
+
+    startEncodeClock(expected);
+    const encodeStartedAt = performance.now();
     const gif = await encodeInWorker(
       {
         id: ++requestId,
@@ -457,11 +495,16 @@ async function convert() {
         width: decoded.width,
         height: decoded.height,
         frameDurations: decoded.frameDurations,
-        quality: Number(qualityInput.value),
+        quality,
         repeat: loopInput.checked ? 0 : -1,
       },
       signal,
     );
+
+    // Feed the real duration back, so this device's next estimate is grounded
+    // in what it actually managed rather than in someone else's hardware.
+    recordEncode(mp, quality, performance.now() - encodeStartedAt);
+    stopEncodeClock();
 
     const blob = new Blob([gif as BufferSource], { type: 'image/gif' });
     if (gifUrl) URL.revokeObjectURL(gifUrl);
@@ -481,6 +524,7 @@ async function convert() {
     showView('edit');
     if (!(error instanceof AbortedError)) showFailure(error, phase, job);
   } finally {
+    stopEncodeClock();
     abortController = null;
   }
 }
@@ -495,6 +539,51 @@ function setProgress(fraction: number | null, label: string, note: string) {
     barFill.classList.remove('indeterminate');
     barFill.style.width = `${Math.round(fraction * 100)}%`;
   }
+}
+
+/**
+ * Show elapsed time during encoding, plus what this device's own history
+ * suggests. There is deliberately no percentage: gifski reports no progress, so
+ * a bar that filled up would be pure fiction.
+ */
+function startEncodeClock(expected: number | undefined) {
+  stopEncodeClock();
+
+  const startedAt = performance.now();
+  const warnAt = watchdogSeconds(expected);
+  let warned = false;
+
+  const tick = () => {
+    const elapsed = (performance.now() - startedAt) / 1000;
+
+    const parts = [`${formatClock(elapsed)} elapsed`];
+
+    if (expected !== undefined) {
+      parts.push(`usually about ${formatDuration(expected)} on this device`);
+    } else if (!hasCalibration()) {
+      parts.push("first encode on this device, so there's nothing to estimate from yet");
+    }
+
+    progressNote.textContent = parts.join(' · ');
+
+    if (!warned && elapsed > warnAt) {
+      warned = true;
+      progressLabel.textContent = 'Still encoding — longer than expected';
+      progressCard.classList.add('slow');
+    }
+  };
+
+  setProgress(null, 'Encoding with gifski…', '');
+  tick();
+  encodeTimer = window.setInterval(tick, 1000);
+}
+
+function stopEncodeClock() {
+  if (encodeTimer !== null) {
+    window.clearInterval(encodeTimer);
+    encodeTimer = null;
+  }
+  progressCard.classList.remove('slow');
 }
 
 cancelBtn.addEventListener('click', () => abortController?.abort());

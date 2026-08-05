@@ -441,6 +441,21 @@ input[type="range"]:focus-visible {
   font-weight: 600;
 }
 
+.estimate .hint {
+  display: inline-block;
+  margin-top: 0.5rem;
+  color: var(--accent-2);
+}
+
+/* The encode is past what this device's own history predicted. */
+.progress-card.slow .bar-fill {
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+}
+
+.progress-card.slow .progress-head {
+  color: var(--accent-2);
+}
+
 /* ---------- buttons ---------- */
 
 .primary,

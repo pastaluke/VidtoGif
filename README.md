@@ -107,6 +107,47 @@ surface and the only place it appears.
 Any static host works — Netlify, Cloudflare Pages, S3. If yours *can* set
 headers, send COOP/COEP and the service worker becomes unnecessary.
 
+## Why there's no progress bar
+
+gifski's wasm binding exports exactly one function, `encode`, with no progress
+callback and no cancellation hook. The call is synchronous, so the worker's event
+loop is blocked for its entire duration and cannot even emit a heartbeat. There
+is no progress signal to read — a bar that filled up would be animation, not
+information.
+
+So the encode phase shows what is actually true:
+
+- **Elapsed time**, counting up.
+- **What this device has managed before.** Each completed encode records its
+  seconds-per-megapixel in `localStorage`, bucketed by quality. The first encode
+  on a device says plainly that there's nothing to estimate from yet; later ones
+  say "usually about 40s on this device". Nothing is seeded from the developer's
+  machine, because a desktop number would be a lie on a phone.
+- **A watchdog, not a timeout.** Past ~2.5× the device's own history it says so
+  and leaves the decision to you. It never kills a running encode: a big job on a
+  slow phone legitimately takes minutes, and silently discarding that work would
+  be worse than the wait.
+
+Cancel genuinely stops the work. Since wasm exposes no cancellation, the worker
+is terminated outright and a fresh one replaces it — otherwise it would keep
+burning CPU producing a GIF nobody is waiting for.
+
+### Quality is the expensive dial
+
+Measured on the same 80-frame 480×270 job:
+
+| quality | time | vs 80 | GIF size |
+|---|---|---|---|
+| 60 | 3.21s | 1.05× | 0.23 MB |
+| 80 | 3.05s | 1.00× | 0.57 MB |
+| 90 | 5.16s | 1.69× | 0.93 MB |
+| 95 | 5.86s | 1.92× | 1.45 MB |
+| 100 | 12.34s | **4.05×** | 3.38 MB |
+
+The cliff is at 100 specifically. It costs four times the encoding time of 80 and
+produces a file six times larger, for a difference most people can't see — so the
+settings panel says so when you select it.
+
 ## When it fails
 
 There is no server, so there is no error reporting either — nobody sees a crash
