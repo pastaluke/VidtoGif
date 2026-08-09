@@ -159,22 +159,65 @@ footer {
   color: var(--text);
 }
 
-.badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin: 1.25rem 0 0;
-  padding: 0;
-  list-style: none;
-}
+/* ---------- about ---------- */
 
-.badges li {
-  padding: 0.3rem 0.7rem;
-  border-radius: 99px;
+.about {
   background: var(--surface);
   border: 1px solid var(--line);
-  font-size: 0.8rem;
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  max-width: 46rem;
+}
+
+.about h2 {
+  margin: 0 0 1.25rem;
+  font-size: 1.3rem;
+  letter-spacing: -0.02em;
+}
+
+.stack {
+  margin: 0 0 1.5rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.stack dt {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+}
+
+.stack dd {
+  margin: 0.3rem 0 0;
   color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.stack a {
+  color: var(--text);
+}
+
+.stack code {
+  padding: 0.1rem 0.3rem;
+  border-radius: 5px;
+  background: var(--surface-2);
+  font-size: 0.85em;
+}
+
+.about .secondary {
+  width: auto;
+  padding-inline: 1.5rem;
+}
+
+button.ghost-link {
+  background: none;
+  border: 0;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0;
 }
 
 /* ---------- dropzone ---------- */
@@ -625,6 +668,66 @@ input[type="range"]:focus-visible {
   font-size: 0.85rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+/* ---------- download file name ---------- */
+
+.namer {
+  margin-bottom: 0.85rem;
+}
+
+.namer-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.4rem;
+}
+
+.namer-head label {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+/* Looks and behaves like a text field, so it's obvious the name is editable. */
+.namer-field {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  transition: border-color 0.15s;
+}
+
+.namer-field:focus-within {
+  border-color: var(--accent);
+}
+
+.namer-field input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.namer-field input:focus {
+  outline: none;
+}
+
+.namer-field input::placeholder {
+  color: var(--muted);
+}
+
+.namer-ext {
+  color: var(--muted);
+  font-size: 0.9rem;
+  flex-shrink: 0;
 }
 
 /* ---------- misc ---------- */

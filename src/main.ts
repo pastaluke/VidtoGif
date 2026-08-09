@@ -64,9 +64,15 @@ const progressNote = $<HTMLParagraphElement>('progressNote');
 const barFill = $<HTMLDivElement>('barFill');
 const cancelBtn = $<HTMLButtonElement>('cancel');
 
+const about = $<HTMLElement>('about');
+const aboutToggle = $<HTMLButtonElement>('aboutToggle');
+const aboutClose = $<HTMLButtonElement>('aboutClose');
+
 const result = $<HTMLElement>('result');
 const resultImg = $<HTMLImageElement>('resultImg');
 const download = $<HTMLAnchorElement>('download');
+const gifName = $<HTMLInputElement>('gifName');
+const clearName = $<HTMLButtonElement>('clearName');
 const startOver = $<HTMLButtonElement>('startOver');
 const statSize = $<HTMLElement>('statSize');
 const statDims = $<HTMLElement>('statDims');
@@ -125,12 +131,42 @@ if (globalThis.crossOriginIsolated) {
 
 type View = 'pick' | 'edit' | 'busy' | 'done';
 
+let currentView: View = 'pick';
+
 function showView(view: View) {
+  currentView = view;
+  if (aboutOpen) return; // About covers the app; restored when it closes
+
   dropzone.hidden = view !== 'pick';
   editor.hidden = view !== 'edit';
   progressCard.hidden = view !== 'busy';
   result.hidden = view !== 'done';
 }
+
+/* ------------------------------------------------------------------ *
+ * About
+ * ------------------------------------------------------------------ */
+
+let aboutOpen = false;
+
+function setAbout(open: boolean) {
+  aboutOpen = open;
+  about.hidden = !open;
+  aboutToggle.setAttribute('aria-expanded', String(open));
+  aboutToggle.textContent = open ? 'Back' : 'About';
+
+  if (open) {
+    dropzone.hidden = true;
+    editor.hidden = true;
+    progressCard.hidden = true;
+    result.hidden = true;
+  } else {
+    showView(currentView);
+  }
+}
+
+aboutToggle.addEventListener('click', () => setAbout(!aboutOpen));
+aboutClose.addEventListener('click', () => setAbout(false));
 
 /** Simple message with no diagnostic payload (bad file picked, empty trim, ...). */
 function showError(message: string) {
@@ -512,7 +548,10 @@ async function convert() {
 
     resultImg.src = gifUrl;
     download.href = gifUrl;
-    download.download = `${currentFile.name.replace(/\.[^.]+$/, '')}.gif`;
+
+    // Prefill with the source file's name, which the user can edit before saving.
+    gifName.value = sanitiseName(currentFile.name.replace(/\.[^.]+$/, ''));
+    syncDownloadName();
 
     statSize.textContent = formatBytes(blob.size);
     statDims.textContent = `${decoded.width}×${decoded.height}`;
@@ -585,6 +624,48 @@ function stopEncodeClock() {
   }
   progressCard.classList.remove('slow');
 }
+
+/* ------------------------------------------------------------------ *
+ * Download file name
+ * ------------------------------------------------------------------ */
+
+const FALLBACK_NAME = 'vidtogif';
+
+/**
+ * Strip what filesystems reject, so the browser doesn't silently substitute its
+ * own name. Also drops a trailing ".gif" — the suffix is shown beside the field,
+ * and typing it would otherwise produce "clip.gif.gif".
+ */
+function sanitiseName(raw: string): string {
+  return raw
+    .replace(/\.gif$/i, '')
+    // Path separators, Windows-reserved characters and control codes.
+    // Spaces and hyphens are kept: valid, and people use them in names.
+    .replace(/[/\\:*?"<>|\u0000-\u001f]/g, '')
+    .replace(/^\.+/, '')
+    .trim()
+    .slice(0, 120);
+}
+
+function syncDownloadName() {
+  const name = sanitiseName(gifName.value);
+  download.download = `${name || FALLBACK_NAME}.gif`;
+}
+
+gifName.placeholder = FALLBACK_NAME;
+gifName.addEventListener('input', syncDownloadName);
+
+// Keep the field honest about what will actually be saved.
+gifName.addEventListener('blur', () => {
+  gifName.value = sanitiseName(gifName.value);
+  syncDownloadName();
+});
+
+clearName.addEventListener('click', () => {
+  gifName.value = '';
+  syncDownloadName();
+  gifName.focus();
+});
 
 cancelBtn.addEventListener('click', () => abortController?.abort());
 

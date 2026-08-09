@@ -22,6 +22,7 @@
       </div>
       <nav>
         <span class="pill" id="threadPill" title="Multi-threaded encoding requires SharedArrayBuffer">checking…</span>
+        <button type="button" class="ghost-link" id="aboutToggle" aria-expanded="false">About</button>
         <a class="ghost-link" href="https://github.com/pastaluke/VidtoGif" target="_blank" rel="noopener">
           Source
         </a>
@@ -30,18 +31,55 @@
 
     <main>
       <section class="hero">
-        <h1>Gorgeous GIFs, made <em>on your own machine</em>.</h1>
+        <h1>Video to GIF</h1>
         <p>
-          Powered by <a href="https://gif.ski" target="_blank" rel="noopener">gifski</a> compiled to
-          WebAssembly — thousands of colours per frame, cross-frame palettes, real dithering. Your
-          video never leaves this tab.
+          Encoded in your browser by
+          <a href="https://github.com/ImageOptim/gifski" target="_blank" rel="noopener">gifski</a>,
+          compiled to WebAssembly.
         </p>
-        <ul class="badges">
-          <li>No upload</li>
-          <li>No sign-up</li>
-          <li>No watermark</li>
-          <li>No size cap but your RAM</li>
-        </ul>
+      </section>
+
+      <section id="about" class="about" hidden>
+        <h2>About</h2>
+
+        <dl class="stack">
+          <dt>Encoder</dt>
+          <dd>
+            <a href="https://github.com/ImageOptim/gifski" target="_blank" rel="noopener">gifski</a>
+            by Kornel Lesiński, via
+            <a href="https://github.com/jamsinclair/gifski-wasm" target="_blank" rel="noopener">gifski-wasm</a>
+            by Jamie Sinclair. Runs in a Web Worker.
+          </dd>
+
+          <dt>Frame capture</dt>
+          <dd>
+            The video plays once in a <code>&lt;video&gt;</code> element while
+            <code>requestVideoFrameCallback</code> hands back each frame, which is drawn to a canvas
+            at the output size.
+          </dd>
+
+          <dt>Threading</dt>
+          <dd>
+            gifski's rayon-parallel build needs <code>SharedArrayBuffer</code>, which requires the
+            page to be cross-origin isolated. A service worker adds the COOP/COEP headers that
+            static hosting can't. Without it, the single-threaded build is used instead.
+          </dd>
+
+          <dt>Build</dt>
+          <dd>TypeScript and Vite, output as static files served by GitHub Pages.</dd>
+
+          <dt>Where your video goes</dt>
+          <dd>Nowhere. There is no server and no upload; all processing happens on this device.</dd>
+
+          <dt>Licence</dt>
+          <dd>
+            <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">AGPL-3.0-or-later</a>,
+            inherited from gifski.
+            <a href="https://github.com/pastaluke/VidtoGif" target="_blank" rel="noopener">Source</a>.
+          </dd>
+        </dl>
+
+        <button type="button" class="secondary" id="aboutClose">Close</button>
       </section>
 
       <!-- Step 1: pick a file -->
@@ -133,6 +171,18 @@
             <div><dt>Frames</dt><dd id="statFrames">—</dd></div>
             <div><dt>Encoded in</dt><dd id="statTime">—</dd></div>
           </dl>
+          <div class="namer">
+            <div class="namer-head">
+              <label for="gifName">File name</label>
+              <button type="button" class="text-btn" id="clearName">Clear name</button>
+            </div>
+            <div class="namer-field">
+              <input type="text" id="gifName" spellcheck="false" autocomplete="off"
+                     aria-label="File name for the downloaded GIF" />
+              <span class="namer-ext">.gif</span>
+            </div>
+          </div>
+
           <a id="download" class="primary" download="vidtogif.gif">Download GIF</a>
           <button type="button" class="secondary" id="startOver">Start over</button>
         </div>
@@ -156,13 +206,9 @@
 
     <footer>
       <p>
-        Everything runs locally in your browser — there is no server to upload to.
-        <a href="https://github.com/pastaluke/VidtoGif" target="_blank" rel="noopener">VidtoGif</a>
-        is free software under the
-        <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">AGPL-3.0</a>,
-        built on <a href="https://github.com/ImageOptim/gifski" target="_blank" rel="noopener">gifski</a>
-        by Kornel Lesiński and
-        <a href="https://github.com/jamsinclair/gifski-wasm" target="_blank" rel="noopener">gifski-wasm</a>.
+        GIF encoding by <a href="https://github.com/ImageOptim/gifski" target="_blank" rel="noopener">gifski</a>.
+        <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">AGPL-3.0</a>.
+        <a href="https://github.com/pastaluke/VidtoGif" target="_blank" rel="noopener">Source</a>.
       </p>
     </footer>
 
